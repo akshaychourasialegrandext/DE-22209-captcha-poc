@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CAPTCHA POC — reCAPTCHA v3 vs Cloudflare Turnstile | Sanus Research</title>
+  <meta name="description" content="Side-by-side proof of concept comparing Google reCAPTCHA v3 and Cloudflare Turnstile for the Sanus CAPTCHA research story." />
+
+  <!-- Google reCAPTCHA v3 — using public test site key -->
+  <script src="https://www.google.com/recaptcha/api.js?render=6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"></script>
+
+  <!-- Cloudflare Turnstile -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0a0d14;
+      --surface:   #111622;
+      --card:      #161d2e;
+      --border:    #1e2a42;
+      --border-hi: #2d3f60;
+      --text:      #e2e8f0;
+      --text-muted:#6b7fa3;
+      --text-dim:  #3d4f6e;
+
+      --google:    #4285f4;
+      --google-dk: #2563eb;
+      --google-glow: rgba(66, 133, 244, 0.25);
+
+      --cf:        #f6821f;
+      --cf-dk:     #ea6c09;
+      --cf-glow:   rgba(246, 130, 31, 0.25);
+
+      --success:   #22c55e;
+      --warning:   #f59e0b;
+      --danger:    #ef4444;
+      --info:      #38bdf8;
+
+      --radius:    14px;
+      --radius-sm: 8px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    /* === HEADER === */
+    header {
+      text-align: center;
+      padding: 60px 24px 48px;
+      background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(66,133,244,0.12) 0%, transparent 60%),
+                  radial-gradient(ellipse 60% 40% at 80% 30%, rgba(246,130,31,0.08) 0%, transparent 60%);
+      border-bottom: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+    header::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg, transparent, transparent 39px,
+        var(--border) 39px, var(--border) 40px
+      ),
+      repeating-linear-gradient(
+        90deg, transparent, transparent 39px,
+        var(--border) 39px, var(--border) 40px
+      );
+      opacity: 0.12;
+      pointer-events: none;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(56,189,248,0.12);
+      border: 1px solid rgba(56,189,248,0.3);
+      color: var(--info);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 5px 14px;
+      border-radius: 100px;
+      margin-bottom: 20px;
+    }
+    .badge::before { content: '●'; font-size: 8px; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    header h1 {
+      font-size: clamp(28px, 4vw, 48px);
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, #e2e8f0 30%, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 14px;
+    }
+    header p {
+      color: var(--text-muted);
+      font-size: 15px;
+      max-width: 560px;
+      margin: 0 auto;
+    }
+
+    /* === LEGEND === */
+    .legend {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      padding: 20px;
+      flex-wrap: wrap;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .legend-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+    }
+
+    /* === MAIN GRID === */
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px 24px 48px;
+    }
+    @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+    /* === CARD === */
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .card:hover { border-color: var(--border-hi); }
+
+    .card-header {
+      padding: 24px 28px 20px;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+    .card-header.google { background: linear-gradient(135deg, rgba(66,133,244,0.08) 0%, transparent 100%); }
+    .card-header.cf     { background: linear-gradient(135deg, rgba(246,130,31,0.08) 0%, transparent 100%); }
+
+    .card-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .brand-icon {
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .brand-icon.google { background: rgba(66,133,244,0.15); }
+    .brand-icon.cf     { background: rgba(246,130,31,0.15); }
+
+    .card-title {
+      font-size: 17px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .card-title.google { color: #7cb5ff; }
+    .card-title.cf     { color: #ffa44f; }
+
+    .card-subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .tag-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 3px 9px;
+      border-radius: 100px;
+    }
+    .tag.risk-high     { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
+    .tag.risk-low      { background: rgba(34,197,94,0.12);  color: #4ade80; border: 1px solid rgba(34,197,94,0.25); }
+    .tag.friction      { background: rgba(245,158,11,0.12); color: #fbbf24; border: 1px solid rgba(245,158,11,0.25); }
+    .tag.invisible     { background: rgba(56,189,248,0.12); color: #38bdf8; border: 1px solid rgba(56,189,248,0.25); }
+    .tag.b2b           { background: rgba(168,85,247,0.12); color: #c084fc; border: 1px solid rgba(168,85,247,0.25); }
+
+    /* === FORM AREA === */
+    .form-area {
+      padding: 28px;
+      flex: 1;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    input[type="email"],
+    input[type="password"] {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      padding: 11px 14px;
+      border-radius: var(--radius-sm);
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input:focus {
+      border-color: var(--border-hi);
+      box-shadow: 0 0 0 3px rgba(45, 63, 96, 0.5);
+    }
+    input::placeholder { color: var(--text-dim); }
+
+    /* Turnstile widget container */
+    .cf-turnstile { margin: 4px 0; }
+
+    /* reCAPTCHA badge override notice */
+    .recaptcha-note {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+      padding: 10px 12px;
+      background: rgba(66,133,244,0.06);
+      border: 1px solid rgba(66,133,244,0.15);
+      border-radius: var(--radius-sm);
+      margin-bottom: 10px;
+    }
+    .recaptcha-note strong { color: var(--text-muted); }
+
+    /* Buttons */
+    .btn {
+      width: 100%;
+      padding: 12px 20px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+      overflow: hidden;
+      letter-spacing: 0.01em;
+    }
+    .btn::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: white;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .btn:hover::after { opacity: 0.06; }
+    .btn:active { transform: scale(0.98); }
+
+    .btn-google {
+      background: linear-gradient(135deg, var(--google) 0%, var(--google-dk) 100%);
+      color: white;
+      box-shadow: 0 4px 20px var(--google-glow);
+    }
+    .btn-cf {
+      background: linear-gradient(135deg, var(--cf) 0%, var(--cf-dk) 100%);
+      color: white;
+      box-shadow: 0 4px 20px var(--cf-glow);
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .btn .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* === STATUS PILL === */
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      margin-top: 14px;
+      font-weight: 500;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: all 0.3s;
+    }
+    .status-pill.visible { opacity: 1; transform: translateY(0); }
+    .status-pill.success { background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.25); color: #4ade80; }
+    .status-pill.error   { background: rgba(239,68,68,0.1);  border: 1px solid rgba(239,68,68,0.25);  color: #f87171; }
+    .status-pill.loading { background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.25); color: #38bdf8; }
+    .status-pill .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .status-pill.success .dot { background: var(--success); box-shadow: 0 0 6px var(--success); }
+    .status-pill.error   .dot { background: var(--danger);  box-shadow: 0 0 6px var(--danger); }
+    .status-pill.loading .dot { background: var(--info);    box-shadow: 0 0 6px var(--info); animation: pulse 1s infinite; }
+
+    /* === LOG PANEL === */
+    .log-panel {
+      border-top: 1px solid var(--border);
+      padding: 16px 20px;
+      min-height: 170px;
+      max-height: 260px;
+      overflow-y: auto;
+      background: rgba(0,0,0,0.2);
+    }
+    .log-panel-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .log-panel-title::before {
+      content: '▶';
+      font-size: 8px;
+      color: var(--text-dim);
+    }
+    .log-entry {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11.5px;
+      line-height: 1.7;
+      padding: 2px 0;
+      display: flex;
+      gap: 10px;
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.2s;
+    }
+    .log-entry:hover { border-bottom-color: var(--border); }
+    .log-time { color: var(--text-dim); flex-shrink: 0; }
+    .log-msg.info    { color: var(--text-muted); }
+    .log-msg.success { color: #4ade80; }
+    .log-msg.warn    { color: #fbbf24; }
+    .log-msg.error   { color: #f87171; }
+    .log-msg.token   { color: #c084fc; word-break: break-all; }
+
+    /* === COMPARISON TABLE === */
+    .compare-section {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px 60px;
+    }
+    .compare-title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 20px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      color: var(--text);
+    }
+    .compare-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .compare-table th {
+      text-align: left;
+      padding: 10px 16px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+    }
+    .compare-table td {
+      padding: 13px 16px;
+      border-bottom: 1px solid #111622;
+      color: var(--text-muted);
+      vertical-align: top;
+    }
+    .compare-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .compare-table td:first-child { color: var(--text); font-weight: 500; }
+    .compare-table td.win  { color: #4ade80; }
+    .compare-table td.lose { color: #f87171; }
+    .compare-table td.tie  { color: #fbbf24; }
+
+    /* === GLOBAL FLOW === */
+    .flow-section {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px 60px;
+    }
+    .flow-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 20px; }
+    .flow-steps {
+      display: flex;
+      gap: 0;
+      align-items: stretch;
+      flex-wrap: wrap;
+    }
+    .flow-step {
+      flex: 1;
+      min-width: 160px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 20px 18px;
+      position: relative;
+      text-align: center;
+    }
+    .flow-step:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+    .flow-step:last-child  { border-radius: 0 var(--radius) var(--radius) 0; }
+    .flow-step + .flow-step::before {
+      content: '→';
+      position: absolute;
+      left: -14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-dim);
+      font-size: 16px;
+      z-index: 1;
+    }
+    .flow-step-icon { font-size: 28px; margin-bottom: 10px; }
+    .flow-step-label { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .flow-step-desc  { font-size: 11px; color: var(--text-muted); }
+
+    /* Highlight step for Turnstile (invisible) */
+    .flow-step.invisible-step {
+      background: linear-gradient(135deg, rgba(56,189,248,0.06) 0%, transparent 100%);
+      border-color: rgba(56,189,248,0.25);
+    }
+    .flow-step.invisible-step .flow-step-label { color: var(--info); }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header>
+    <div class="badge">Sanus Research · CAPTCHA POC</div>
+    <h1>Google reCAPTCHA v3<br/>vs. Cloudflare Turnstile</h1>
+    <p>Side-by-side proof of concept using official test keys. Submit the forms below to experience the real UX difference.</p>
+  </header>
+
+  <!-- LEGEND -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--success)"></div>Token Verified</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--danger)"></div>Verification Failed</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--info)"></div>Processing (Background)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--warning)"></div>User Interaction Required</div>
+  </div>
+
+  <!-- TWO COLUMN GRID -->
+  <div class="grid">
+
+    <!-- ===== COLUMN 1: Google reCAPTCHA v3 ===== -->
+    <div class="card" id="google-card">
+      <div class="card-header google">
+        <div class="card-brand">
+          <div class="brand-icon google">G</div>
+          <div>
+            <div class="card-title google">Google reCAPTCHA v3</div>
+            <div class="card-subtitle">Risk-scored background verification</div>
+          </div>
+        </div>
+        <div class="tag-row">
+          <span class="tag friction">Possible Challenges</span>
+          <span class="tag risk-high">Privacy: Google Signals</span>
+          <span class="tag b2b">v3 — Score Based</span>
+        </div>
+      </div>
+
+      <div class="form-area">
+        <div class="recaptcha-note">
+          <strong>How this works:</strong> reCAPTCHA v3 runs invisibly in the background on page load.
+          A <em>risk score (0.0–1.0)</em> is assigned per action. Low scores trigger additional challenges.
+          You won't see a checkbox here — the score check happens when you click Sign In.
+        </div>
+
+        <form id="google-form" novalidate>
+          <div class="form-group">
+            <label for="g-email">Email Address</label>
+            <input type="email" id="g-email" placeholder="you@company.com" value="user@sanus.com" autocomplete="email" />
+          </div>
+          <div class="form-group">
+            <label for="g-password">Password</label>
+            <input type="password" id="g-password" placeholder="••••••••" value="Password123!" autocomplete="current-password" />
+          </div>
+          <button type="submit" class="btn btn-google" id="google-btn">
+            Sign In with reCAPTCHA
+          </button>
+          <div class="status-pill" id="google-status">
+            <div class="dot"></div>
+            <span id="google-status-text"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="log-panel" id="google-log">
+        <div class="log-panel-title">Event Log — reCAPTCHA v3</div>
+      </div>
+    </div>
+
+    <!-- ===== COLUMN 2: Cloudflare Turnstile ===== -->
+    <div class="card" id="cf-card">
+      <div class="card-header cf">
+        <div class="card-brand">
+          <div class="brand-icon cf">☁</div>
+          <div>
+            <div class="card-title cf">Cloudflare Turnstile</div>
+            <div class="card-subtitle">Invisible cryptographic verification</div>
+          </div>
+        </div>
+        <div class="tag-row">
+          <span class="tag invisible">Fully Invisible</span>
+          <span class="tag risk-low">Privacy First</span>
+          <span class="tag b2b">B2B Friendly</span>
+        </div>
+      </div>
+
+      <div class="form-area">
+        <form id="cf-form" novalidate>
+          <div class="form-group">
+            <label for="cf-email">Email Address</label>
+            <input type="email" id="cf-email" placeholder="you@company.com" value="user@sanus.com" autocomplete="email" />
+          </div>
+          <div class="form-group">
+            <label for="cf-password">Password</label>
+            <input type="password" id="cf-password" placeholder="••••••••" value="Password123!" autocomplete="current-password" />
+          </div>
+
+          <!-- Turnstile invisible widget — test key: always passes silently -->
+          <div class="cf-turnstile"
+               data-sitekey="1x00000000000000000000AA"
+               data-callback="onTurnstileSuccess"
+               data-error-callback="onTurnstileError"
+               data-expired-callback="onTurnstileExpired"
+               data-theme="dark"
+               data-size="flexible">
+          </div>
+
+          <button type="submit" class="btn btn-cf" id="cf-btn" disabled>
+            <span class="spinner"></span> Verifying in background…
+          </button>
+          <div class="status-pill" id="cf-status">
+            <div class="dot"></div>
+            <span id="cf-status-text"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="log-panel" id="cf-log">
+        <div class="log-panel-title">Event Log — Cloudflare Turnstile</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GLOBAL FLOW DIAGRAM -->
+  <section class="flow-section">
+    <div class="flow-title">🌐 How a Global Entry-Level Check Would Work (Recommended Architecture)</div>
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="flow-step-icon">🌍</div>
+        <div class="flow-step-label">User visits site</div>
+        <div class="flow-step-desc">First or returning visitor lands on any page</div>
+      </div>
+      <div class="flow-step invisible-step">
+        <div class="flow-step-icon">🔍</div>
+        <div class="flow-step-label">Invisible check</div>
+        <div class="flow-step-desc">Turnstile runs background crypto & environment checks (~300ms)</div>
+      </div>
+      <div class="flow-step invisible-step">
+        <div class="flow-step-icon">🪙</div>
+        <div class="flow-step-label">Token issued</div>
+        <div class="flow-step-desc">Session token stored; auto-refreshes every ~5min silently</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-icon">📝</div>
+        <div class="flow-step-label">User submits form</div>
+        <div class="flow-step-desc">Login, registration, or any sensitive action</div>
+      </div>
+      <div class="flow-step invisible-step">
+        <div class="flow-step-icon">🛡️</div>
+        <div class="flow-step-label">Server verifies</div>
+        <div class="flow-step-desc">Token sent to Cloudflare API — pass/fail in &lt;100ms</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-step-icon">✅</div>
+        <div class="flow-step-label">Access granted</div>
+        <div class="flow-step-desc">User proceeds — no friction experienced at any step</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COMPARISON TABLE -->
+  <section class="compare-section">
+    <div class="compare-title">📊 Head-to-Head Comparison</div>
+    <table class="compare-table">
+      <thead>
+        <tr>
+          <th>Criterion</th>
+          <th>Google reCAPTCHA v3</th>
+          <th>Cloudflare Turnstile</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>User sees anything?</td>
+          <td class="lose">Badge + possible challenges</td>
+          <td class="win">Nothing (invisible)</td>
+        </tr>
+        <tr>
+          <td>B2B / VPN users</td>
+          <td class="lose">Higher friction, more challenges triggered</td>
+          <td class="win">Designed to handle shared IPs gracefully</td>
+        </tr>
+        <tr>
+          <td>Accessibility (WCAG)</td>
+          <td class="lose">Image challenges — screen reader issues</td>
+          <td class="win">No puzzles, no language barriers</td>
+        </tr>
+        <tr>
+          <td>Privacy footprint</td>
+          <td class="lose">Cross-site Google tracking signals</td>
+          <td class="win">No cross-site tracking</td>
+        </tr>
+        <tr>
+          <td>Per-session friction</td>
+          <td class="lose">Re-scored every action; may escalate</td>
+          <td class="win">Silent token refresh every ~5min</td>
+        </tr>
+        <tr>
+          <td>Bot protection strength</td>
+          <td class="tie">✅ Excellent for commodity bots</td>
+          <td class="tie">✅ Excellent for commodity bots</td>
+        </tr>
+        <tr>
+          <td>Free tier</td>
+          <td class="tie">✅ Yes</td>
+          <td class="tie">✅ Yes</td>
+        </tr>
+        <tr>
+          <td>Server-side verify API</td>
+          <td class="tie">✅ siteverify endpoint</td>
+          <td class="tie">✅ siteverify endpoint (same pattern)</td>
+        </tr>
+        <tr>
+          <td>Enterprise/regulated sectors</td>
+          <td class="lose">Legal concerns in EU/healthcare</td>
+          <td class="win">Privacy-safe, strong compliance story</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <script>
+    // ─── Utility ─────────────────────────────────────────────────
+
+    function now() {
+      return new Date().toLocaleTimeString('en-US', { hour12: false,
+        hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function addLog(panelId, message, type = 'info') {
+      const panel = document.getElementById(panelId);
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `
+        <span class="log-time">${now()}</span>
+        <span class="log-msg ${type}">${message}</span>
+      `;
+      panel.appendChild(entry);
+      panel.scrollTop = panel.scrollHeight;
+    }
+
+    function setStatus(id, type, message) {
+      const pill = document.getElementById(id);
+      const text = document.getElementById(id + '-text');
+      pill.className = 'status-pill ' + type + ' visible';
+      text.textContent = message;
+    }
+
+    // ─── Mock Server-Side Verification ───────────────────────────
+    // In production: POST to /api/verify-captcha which calls:
+    //   Google: https://www.google.com/recaptcha/api/siteverify
+    //   CF:     https://challenges.cloudflare.com/turnstile/v0/siteverify
+
+    async function mockVerifyToken(token, service) {
+      await new Promise(r => setTimeout(r, 600 + Math.random() * 400));
+      // Simulate server response (always success with test keys)
+      if (service === 'google') {
+        return { success: true, score: 0.9, action: 'login', challenge_ts: new Date().toISOString() };
+      } else {
+        return { success: true, hostname: 'localhost', challenge_ts: new Date().toISOString() };
+      }
+    }
+
+    // ─── GOOGLE reCAPTCHA v3 ─────────────────────────────────────
+
+    const GOOGLE_TEST_KEY = '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI';
+
+    addLog('google-log', 'Page loaded — reCAPTCHA v3 script initializing…', 'info');
+
+    // reCAPTCHA v3 is ready state
+    let googleReady = false;
+    const checkGoogleReady = setInterval(() => {
+      if (typeof grecaptcha !== 'undefined') {
+        grecaptcha.ready(() => {
+          googleReady = true;
+          addLog('google-log', 'reCAPTCHA v3 initialized (background scoring active)', 'success');
+          addLog('google-log', 'Listening for form actions to score…', 'info');
+        });
+        clearInterval(checkGoogleReady);
+      }
+    }, 300);
+
+    document.getElementById('google-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!googleReady) {
+        addLog('google-log', 'reCAPTCHA not yet ready', 'warn');
+        return;
+      }
+
+      const btn = document.getElementById('google-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Requesting score…';
+      setStatus('google-status', 'loading', 'Requesting reCAPTCHA v3 token for "login" action…');
+      addLog('google-log', 'Action triggered: "login" — requesting score token…', 'info');
+
+      try {
+        const token = await grecaptcha.execute(GOOGLE_TEST_KEY, { action: 'login' });
+        const preview = token.substring(0, 28) + '…';
+        addLog('google-log', `Token received: ${preview}`, 'token');
+        addLog('google-log', 'Sending token to server for verification…', 'info');
+        setStatus('google-status', 'loading', 'Verifying token server-side…');
+
+        btn.innerHTML = '<span class="spinner"></span> Verifying server-side…';
+
+        const result = await mockVerifyToken(token, 'google');
+
+        if (result.success) {
+          addLog('google-log', `✓ Server verified — score: ${result.score}/1.0`, 'success');
+          addLog('google-log', `Risk assessment: ${result.score >= 0.7 ? 'LOW RISK — proceed' : result.score >= 0.5 ? 'MEDIUM RISK — monitor' : 'HIGH RISK — challenge'}`, result.score >= 0.7 ? 'success' : 'warn');
+          addLog('google-log', 'Login request proceeding…', 'success');
+          setStatus('google-status', 'success', `✓ Verified! Score: ${result.score}/1.0 — Login successful (mock)`);
+          btn.innerHTML = '✓ Signed In';
+          btn.style.background = 'linear-gradient(135deg, #16a34a, #15803d)';
+        } else {
+          throw new Error('Verification failed');
+        }
+      } catch (err) {
+        addLog('google-log', `✗ Error: ${err.message}`, 'error');
+        setStatus('google-status', 'error', '✗ Verification failed — please try again');
+        btn.disabled = false;
+        btn.innerHTML = 'Sign In with reCAPTCHA';
+      }
+    });
+
+    // ─── CLOUDFLARE TURNSTILE ────────────────────────────────────
+
+    let turnstileToken = null;
+    const cfBtn = document.getElementById('cf-btn');
+
+    addLog('cf-log', 'Page loaded — Turnstile widget initializing in background…', 'info');
+    addLog('cf-log', 'Running browser integrity & environment checks…', 'info');
+
+    window.onTurnstileSuccess = function(token) {
+      turnstileToken = token;
+      const preview = token.substring(0, 28) + '…';
+      addLog('cf-log', '✓ Background check passed!', 'success');
+      addLog('cf-log', `Token issued silently: ${preview}`, 'token');
+      addLog('cf-log', 'User sees: NOTHING — button is now ready', 'success');
+      cfBtn.disabled = false;
+      cfBtn.innerHTML = 'Sign In — Verified ✓';
+      setStatus('cf-status', 'success', '✓ Already verified in background — no user action needed');
+    };
+
+    window.onTurnstileError = function() {
+      addLog('cf-log', '✗ Background check failed — unusual environment detected', 'error');
+      addLog('cf-log', 'This would typically indicate a bot or automated browser', 'warn');
+      setStatus('cf-status', 'error', '✗ Verification failed — suspicious environment (e.g. headless browser)');
+      cfBtn.innerHTML = 'Verification Failed';
+    };
+
+    window.onTurnstileExpired = function() {
+      turnstileToken = null;
+      addLog('cf-log', 'Token expired after ~5 min — auto-refreshing silently…', 'warn');
+      addLog('cf-log', 'User sees: NOTHING — refresh is invisible', 'info');
+      cfBtn.disabled = true;
+      cfBtn.innerHTML = '<span class="spinner"></span> Refreshing token…';
+      setStatus('cf-status', 'loading', 'Token expired — silently refreshing in background…');
+    };
+
+    document.getElementById('cf-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!turnstileToken) {
+        addLog('cf-log', 'No token available yet — waiting for background check…', 'warn');
+        return;
+      }
+
+      cfBtn.disabled = true;
+      cfBtn.innerHTML = '<span class="spinner"></span> Sending to server…';
+      setStatus('cf-status', 'loading', 'Sending token to server for verification…');
+      addLog('cf-log', 'Form submitted — token attached to request body…', 'info');
+      addLog('cf-log', 'Server calling: POST challenges.cloudflare.com/turnstile/v0/siteverify', 'info');
+
+      const result = await mockVerifyToken(turnstileToken, 'cloudflare');
+
+      if (result.success) {
+        addLog('cf-log', '✓ Server verified token — Cloudflare confirms: PASS', 'success');
+        addLog('cf-log', 'Login request proceeding — zero friction experienced', 'success');
+        setStatus('cf-status', 'success', '✓ Verified server-side! Login successful (mock) — User saw nothing');
+        cfBtn.innerHTML = '✓ Signed In';
+        cfBtn.style.background = 'linear-gradient(135deg, #16a34a, #15803d)';
+      } else {
+        addLog('cf-log', '✗ Server verification failed', 'error');
+        setStatus('cf-status', 'error', '✗ Verification failed');
+        cfBtn.disabled = false;
+        cfBtn.innerHTML = 'Sign In — Verified ✓';
+      }
+    });
+  </script>
+</body>
+</html>
